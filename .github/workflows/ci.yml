@@ -1,11 +1,53 @@
-name: ci
+name: "ci"
 
-on: [push]
+on:
+  pull_request:
+    branches: [ "main" ]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
-  build:
+  check_changelog_entry:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - name: Run a one-line script
-      run: echo Hello, world!
+      - uses: actions/checkout@v6
+
+      - name: Changelog management
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Get fresh pull_request body using GitHub API
+          PR_BODY=$(gh pr view $PR_NUMBER --json body --template '{{.body}}')
+
+          echo "The pull request number is: '$PR_NUMBER'"
+          echo "The pull request body is: '$PR_BODY'"
+
+          if ! echo "$PR_BODY" | grep -iq "Changelog Entry:"; then
+            gh pr edit $PR_NUMBER --remove-label "has-changelog,needs-changelog-review" || echo "Label not found, nothing to remove."
+            echo "::error::Changelog Entry: not found in PR description!"
+            exit 1
+          fi
+
+          CONTENT=$(echo "$PR_BODY" | grep -i "Changelog Entry:" | sed 's/.*Changelog Entry://I' | xargs | tr '[:upper:]' '[:lower:]')
+
+          echo "Print CONTENT: '$CONTENT'"
+
+          # Check empty content
+          if [ -z "$CONTENT" ]; then
+            gh pr edit $PR_NUMBER --remove-label "has-changelog,needs-changelog-review" || echo "Label not found, nothing to remove."
+            echo "::error::Changelog Entry: is empty! Please provide a description or write 'none'."
+            exit 1
+          fi
+
+          if [ "$CONTENT" = "none" ]; then
+            echo "Changelog is set to 'none'. Removing labels if they exist..."
+            gh pr edit $PR_NUMBER --remove-label "has-changelog,needs-changelog-review" || echo "Label not found, nothing to remove."
+          else
+            echo "Changelog entry found. Adding label"
+            gh pr edit $PR_NUMBER --remove-label "has-changelog" || echo "Label not found, nothing to remove."
+            gh pr edit $PR_NUMBER --add-label "needs-changelog-review"
+          fi
